@@ -7,7 +7,7 @@ from datetime import datetime
 from collections import defaultdict
 
 # Переменные окружения
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
 GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
 MESSAGE_LIMIT_PER_DAY = 30
@@ -29,8 +29,8 @@ menu_markup = {
 
 # Системное сообщение для GPTBots — роль и стиль агента
 SYSTEM_PROMPT = (
-    "Вы — помощник по компьютерной грамотности для новичков. "
-    "Отвечайте понятно, дружелюбно и по существу. "
+    "Вы — экспертный помощник по компьютерной грамотности для начинающих. "
+    "Отвечайте понятно, дружелюбно и по существу. Избегайте сложных терминов, если не попросили. "
     "Помогайте с вопросами по работе с компьютером, смартфоном, интернетом, программами и настройкам. "
     "Если вопрос выходит за рамки — вежливо сообщайте об этом."
 )
@@ -49,14 +49,11 @@ def gptbots_generate(text, user_id):
     }
     try:
         r = requests.post(endpoint, headers=headers, json=data, timeout=12)
-        if r.status_code == 200:
-            resp = r.json()
-            return resp.get('data', {}).get('reply', 'Сервис GPTBots не ответил.')
-        elif r.status_code == 429:
-            return "Лимит запросов GPTBots исчерпан, попробуйте позже."
-        else:
-            return f"Ошибка GPTBots ({r.status_code}): {r.text}"
-    except requests.exceptions.RequestException:
+        r.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        resp = r.json()
+        return resp.get('data', {}).get('reply', 'Сервис GPTBots не ответил.')
+    except requests.exceptions.RequestException as e:
+        print(f"Error with GPTBots API: {e}")
         return "Не удалось связаться с сервисом GPTBots. Попробуйте позже."
 
 def check_limit(user_id):
@@ -76,7 +73,7 @@ def increment_limit(user_id):
         record["count"] += 1
 
 def send_message(chat_id, text, reply_markup=menu_markup):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
         "chat_id": chat_id,
         "text": text,
@@ -85,11 +82,11 @@ def send_message(chat_id, text, reply_markup=menu_markup):
     }
     try:
         requests.post(url, json=data, timeout=10)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error sending message to Telegram: {e}")
 
 def send_inline(chat_id, text, button_text, button_url):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     reply_markup = {
         "inline_keyboard": [
             [{"text": button_text, "url": button_url}]
@@ -103,8 +100,8 @@ def send_inline(chat_id, text, button_text, button_url):
     }
     try:
         requests.post(url, json=data, timeout=10)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error sending inline message to Telegram: {e}")
 
 app = FastAPI()
 
@@ -152,7 +149,7 @@ async def webhook(request: Request):
             response = gptbots_generate(text, user_id)
             send_message(chat_id, response)
 
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"An error occurred: {e}")  # Log the error for debugging
 
     return JSONResponse({"ok": True})
