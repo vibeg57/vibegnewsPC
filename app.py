@@ -1,33 +1,74 @@
 import os
 import requests
+import json
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-import json
 from datetime import datetime
-from collections import defaultdict
+import sqlite3
+import logging
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()]
+)
 
 # Переменные окружения
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
 GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
-MESSAGE_LIMIT_PER_DAY = 30
+MESSAGE_LIMIT_PER_DAY = int(os.getenv("MESSAGE_LIMIT_PER_DAY", 30))
 
-# Счетчик сообщений
-user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
-ignore_list = set()
+# База данных для хранения счетчиков сообщений
+DB_PATH = "messages.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_messages (
+            user_id INTEGER PRIMARY KEY,
+            date TEXT,
+            count INTEGER
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def check_limit(user_id):
+    today = datetime.utcnow().date()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT date, count FROM user_messages WHERE user_id = ?", (user_id,))
+    record = cursor.fetchone()
+    if not record or record[0] != str(today):
+        cursor.execute("REPLACE INTO user_messages (user_id, date, count) VALUES (?, ?, 0)", (user_id, str(today)))
+        conn.commit()
+        conn.close()
+        return True
+    return record[1] < MESSAGE_LIMIT_PER_DAY
+
+def increment_limit(user_id):
+    today = datetime.utcnow().date()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE user_messages SET count = count + 1 WHERE user_id = ? AND date = ?", (user_id, str(today)))
+    conn.commit()
+    conn.close()
 
 # Клавиатура меню
-menu_keyboard = [
-    ["Компьютер", "Смартфон"],
-    ["Интернет", "Программы"],
-    ["FAQ", "О боте"]
+MENU_OPTIONS = [
+    "Компьютер", "Смартфон", "Интернет", "Программы", "FAQ", "О боте"
 ]
-menu_markup = {
-    "keyboard": menu_keyboard,
-    "resize_keyboard": True
-}
 
-# Системное сообщение для GPTBots — роль и стиль агента
+def generate_menu_keyboard():
+    keyboard = [MENU_OPTIONS[i:i+2] for i in range(0, len(MENU_OPTIONS), 2)]
+    return {"keyboard": keyboard, "resize_keyboard": True}
+
+menu_markup = generate_menu_keyboard()
+
+# Системное сообщение для GPTBots
 SYSTEM_PROMPT = (
     "Вы — экспертный помощник по компьютерной грамотности для начинающих. "
     "Отвечайте понятно, дружелюбно и по существу. Избегайте сложных терминов, если не попросили. "
@@ -48,29 +89,16 @@ def gptbots_generate(text, user_id):
         "system_prompt": SYSTEM_PROMPT
     }
     try:
-        r = requests.post(endpoint, headers=headers, json=data, timeout=12)
-        r.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
-        resp = r.json()
+        response = requests.post(endpoint, headers=headers, json=data, timeout=12)
+        response.raise_for_status()
+        resp = response.json()
         return resp.get('data', {}).get('reply', 'Сервис GPTBots не ответил.')
+    except requests.exceptions.Timeout:
+        logging.error("Таймаут при запросе к GPTBots API")
+        return "Сервис временно недоступен. Попробуйте позже."
     except requests.exceptions.RequestException as e:
-        print(f"Error with GPTBots API: {e}")
-        return "Не удалось связаться с сервисом GPTBots. Попробуйте позже."
-
-def check_limit(user_id):
-    today = datetime.utcnow().date()
-    record = user_message_count[user_id]
-    if record["date"] != today:
-        user_message_count[user_id] = {"date": today, "count": 0}
-        return True
-    return record["count"] < MESSAGE_LIMIT_PER_DAY
-
-def increment_limit(user_id):
-    today = datetime.utcnow().date()
-    record = user_message_count[user_id]
-    if record["date"] != today:
-        user_message_count[user_id] = {"date": today, "count": 1}
-    else:
-        record["count"] += 1
+        logging.error(f"Ошибка при запросе к GPTBots API: {e}")
+        return "Произошла ошибка при обращении к сервису GPTBots."
 
 def send_message(chat_id, text, reply_markup=menu_markup):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -81,9 +109,12 @@ def send_message(chat_id, text, reply_markup=menu_markup):
         "reply_markup": json.dumps(reply_markup)
     }
     try:
-        requests.post(url, json=data, timeout=10)
-    except Exception as e:
-        print(f"Error sending message to Telegram: {e}")
+        response = requests.post(url, json=data, timeout=10)
+        response.raise_for_status()
+        return True
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Ошибка отправки сообщения в Telegram: {e}")
+        return False
 
 def send_inline(chat_id, text, button_text, button_url):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -99,9 +130,15 @@ def send_inline(chat_id, text, button_text, button_url):
         "reply_markup": json.dumps(reply_markup)
     }
     try:
-        requests.post(url, json=data, timeout=10)
-    except Exception as e:
-        print(f"Error sending inline message to Telegram: {e}")
+        response = requests.post(url, json=data, timeout=10)
+        response.raise_for_status()
+        return True
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Ошибка отправки inline-сообщения в Telegram: {e}")
+        return False
+
+# Инициализация базы данных
+init_db()
 
 app = FastAPI()
 
@@ -114,9 +151,7 @@ async def webhook(request: Request):
     text = message.get("text", "")
 
     if not chat_id or not user_id:
-        return JSONResponse({"ok": True})
-
-    if user_id in ignore_list:
+        logging.warning("Не удалось получить chat_id или user_id")
         return JSONResponse({"ok": True})
 
     if not check_limit(user_id):
@@ -127,29 +162,25 @@ async def webhook(request: Request):
     try:
         if text == "/start":
             send_message(chat_id, "Привет! Я помощник по компьютерной грамотности для новичков. Выберите раздел меню:")
-
-        elif text == "Компьютер":
-            send_message(chat_id, "В этом разделе вы найдете советы по работе с компьютером, настройке операционной системы и решению распространенных проблем.")
-        elif text == "Смартфон":
-            send_message(chat_id, "Здесь вы узнаете, как пользоваться смартфоном, устанавливать приложения и настраивать параметры.")
-        elif text == "Интернет":
-            send_message(chat_id, "В этом разделе вы найдете информацию о безопасном использовании интернета, поисковых системах и социальных сетях.")
-        elif text == "Программы":
-            send_message(chat_id, "Здесь вы найдете советы по выбору и использованию различных программ для работы, учебы и развлечений.")
-        elif text == "FAQ":
-            send_message(chat_id, "В этом разделе собраны ответы на часто задаваемые вопросы.")
-        elif text == "О боте":
-            send_inline(chat_id,
-                        ("Бот является помощником сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/) и даёт ответы по его темам и другим вопросам.\n\n"
-                         f"*Основные возможности:*\n- Лимит сообщений: {MESSAGE_LIMIT_PER_DAY} в сутки.\n- Сброс лимита: раз в день.\n- Ведение статистики использования для улучшения сервиса.\n\n"
-                         "*Конфиденциальность:*\nВсе ваши данные и сообщения обрабатываются с соблюдением конфиденциальности и не передаются третьим лицам."),
-                        "Перейти на сайт", "https://vibegnews.tilda.ws/")
-
+        elif text in MENU_OPTIONS:
+            handle_menu_option(chat_id, text)
         else:
             response = gptbots_generate(text, user_id)
             send_message(chat_id, response)
-
     except Exception as e:
-        print(f"An error occurred: {e}")  # Log the error for debugging
+        logging.error(f"Произошла ошибка: {e}")
 
     return JSONResponse({"ok": True})
+
+def handle_menu_option(chat_id, option):
+    messages = {
+        "Компьютер": "В этом разделе вы найдете советы по работе с компьютером...",
+        "Смартфон": "Здесь вы узнаете, как пользоваться смартфоном...",
+        "Интернет": "В этом разделе вы найдете информацию о безопасном использовании интернета...",
+        "Программы": "Здесь вы найдете советы по выбору и использованию программ...",
+        "FAQ": "В этом разделе собраны ответы на часто задаваемые вопросы.",
+        "О боте": ("Бот является помощником сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/) и даёт ответы по его темам и другим вопросам.\n\n"
+                   f"*Основные возможности:*\n- Лимит сообщений: {MESSAGE_LIMIT_PER_DAY} в сутки.\n- Сброс лимита: раз в день.\n- Ведение статистики использования для улучшения сервиса.\n\n"
+                   "*Конфиденциальность:*\nВсе ваши данные и сообщения обрабатываются с соблюдением конфиденциальности и не передаются третьим лицам.")
+    }
+    send_message(chat_id, messages.get(option, "Выбранный раздел недоступен."))
