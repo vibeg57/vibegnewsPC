@@ -1,5 +1,6 @@
 fastapi==0.95.2
 python-telegram-bot==20.6
 transformers==4.36.2
-torch==2.1.2  # ИЛИ другая актуальная версия, например, 2.2.0. Проверь на pytorch.org!
+torch==2.2.0  # Обновлено до актуальной версии
 python-dotenv==1.0.0
+uvicorn==0.23.2  # Добавлено для запуска FastAPI приложения
