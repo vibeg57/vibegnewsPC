@@ -16,22 +16,46 @@ venv/
 env/
 *.egg
 
+# Локальные базы данных
+*.sqlite3
+*.db
+*.sqlite
+
 # Игнорируем файлы IDE и редакторов
 .idea/
 .vscode/
-# .project
-# .settings/
 *.swp
 *.swo
 *.bak
 *.tmp
 
-# Игнорируем файлы сборки и зависимости Node.js (если они случайно попали)
+# Игнорируем файлы Node.js
 node_modules/
 package-lock.json
 yarn.lock
+npm-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
 
-# Если ты используешь файлы для локальной разработки, которые не нужны на Vercel
-# Например, файлы локальных баз данных, конфигурации и т.п.
-# *.sqlite
-# *.db
+# Артефакты сборки
+dist/
+build/
+out/
+
+# Временные файлы операционной системы
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# CI/CD
+.github/workflows/*.log
+.circleci/*.log
+
+# Логи и PID-файлы
+*.log
+*.pid
