@@ -1,29 +1,24 @@
-# Игнорируем файлы окружения с секретами
 .env
 .env.*
 
-# Игнорируем файлы Vercel, которые не должны попадать в Git
 .vercel/
 .now/
 .nowignore
+project.json
+.vercelignore
 
-# Игнорируем файлы Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
 .venv/
 venv/
 env/
 *.egg
 
-# Локальные базы данных
 *.sqlite3
 *.db
 *.sqlite
 
-# Игнорируем файлы IDE и редакторов
 .idea/
 .vscode/
 .vscode-test/
@@ -33,7 +28,6 @@ env/
 *.bak
 *.tmp
 
-# Игнорируем файлы Node.js
 node_modules/
 package-lock.json
 yarn.lock
@@ -42,34 +36,28 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
-# Артефакты сборки
 dist/
 build/
 out/
 
-# Временные файлы операционной системы
 .DS_Store
 Thumbs.db
 *.ini
 *.lnk
 ntuser.*
 
-# Docker
 Dockerfile
 docker-compose.yml
 .dockerignore
 
-# CI/CD
 .github/workflows/*.log
 .circleci/*.log
 .travis.yml
 .azure-pipelines/
 
-# Логи и PID-файлы
 *.log
 *.pid
 
-# Личные файлы
 *.docx
 *.xlsx
 *.pdf
@@ -77,17 +65,10 @@ docker-compose.yml
 *.jpg
 *.png
 
-# Бинарные файлы и исполняемые скрипты
 *.exe
 *.dll
 *.bat
 *.sh
 
-# Проектные файлы
 Procfile
-README.md
 runtime.txt
-
-# Кэш pip
-__pycache__/
-*.py[cod]
