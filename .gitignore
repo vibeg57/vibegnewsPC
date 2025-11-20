@@ -72,3 +72,4 @@ docker-compose.yml
 
 Procfile
 runtime.txt
+messages.db
