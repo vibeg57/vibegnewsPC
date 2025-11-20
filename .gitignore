@@ -4,6 +4,8 @@
 
 # Игнорируем файлы Vercel, которые не должны попадать в Git
 .vercel/
+.now/
+.nowignore
 
 # Игнорируем файлы Python
 __pycache__/
@@ -24,6 +26,8 @@ env/
 # Игнорируем файлы IDE и редакторов
 .idea/
 .vscode/
+.vscode-test/
+.idea_modules/
 *.swp
 *.swo
 *.bak
@@ -46,6 +50,9 @@ out/
 # Временные файлы операционной системы
 .DS_Store
 Thumbs.db
+*.ini
+*.lnk
+ntuser.*
 
 # Docker
 Dockerfile
@@ -55,7 +62,32 @@ docker-compose.yml
 # CI/CD
 .github/workflows/*.log
 .circleci/*.log
+.travis.yml
+.azure-pipelines/
 
 # Логи и PID-файлы
 *.log
 *.pid
+
+# Личные файлы
+*.docx
+*.xlsx
+*.pdf
+*.zip
+*.jpg
+*.png
+
+# Бинарные файлы и исполняемые скрипты
+*.exe
+*.dll
+*.bat
+*.sh
+
+# Проектные файлы
+Procfile
+README.md
+runtime.txt
+
+# Кэш pip
+__pycache__/
+*.py[cod]
