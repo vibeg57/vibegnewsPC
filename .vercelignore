@@ -1,0 +1,65 @@
+# Игнорируем файлы окружения с секретами
+.env
+.env.*
+
+# Игнорируем системные файлы и временные файлы
+.git/
+.DS_Store
+Thumbs.db
+*.log
+*.pid
+
+# Игнорируем файлы Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+env/
+*.egg
+
+# Локальные базы данных
+*.sqlite3
+*.db
+*.sqlite
+
+# Игнорируем файлы IDE и редакторов
+.idea/
+.vscode/
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# Игнорируем файлы Node.js
+node_modules/
+package-lock.json
+yarn.lock
+npm-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Артефакты сборки
+dist/
+build/
+out/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# CI/CD
+.github/workflows/*.log
+.circleci/*.log
+
+# Файлы Vercel, которые не должны попадать в Git
+.vercel/
+
+# Дополнительно игнорируемые файлы
+.vercelignore
+.nowignore
+.now/
