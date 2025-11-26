@@ -1,4 +1,5 @@
 fastapi==0.95.2
 python-telegram-bot==20.6
 python-dotenv==1.0.0
-requests==2.31.0  # Или другая актуальная версия, которую ты используешь локально
+requests==2.31.0
+uvicorn # Добавь uvicorn, он нужен для запуска FastAPI

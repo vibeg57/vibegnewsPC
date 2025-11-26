@@ -4,7 +4,6 @@ import json
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from datetime import datetime
-# import sqlite3 # Закомментировано, так как SQLite не подходит для Vercel
 import logging
 
 # Настройка логирования
@@ -19,44 +18,6 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
 GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
 MESSAGE_LIMIT_PER_DAY = int(os.getenv("MESSAGE_LIMIT_PER_DAY", 30))
-
-# --- Логика SQLite закомментирована ---
-# DB_PATH = "messages.db"
-
-# def init_db():
-#     conn = sqlite3.connect(DB_PATH)
-#     cursor = conn.cursor()
-#     cursor.execute("""
-#         CREATE TABLE IF NOT EXISTS user_messages (
-#             user_id INTEGER PRIMARY KEY,
-#             date TEXT,
-#             count INTEGER
-#         )
-#     """)
-#     conn.commit()
-#     conn.close()
-
-# def check_limit(user_id):
-#     today = datetime.utcnow().date()
-#     conn = sqlite3.connect(DB_PATH)
-#     cursor = conn.cursor()
-#     cursor.execute("SELECT date, count FROM user_messages WHERE user_id = ?", (user_id,))
-#     record = cursor.fetchone()
-#     if not record or record[0] != str(today):
-#         cursor.execute("REPLACE INTO user_messages (user_id, date, count) VALUES (?, ?, 0)", (user_id, str(today)))
-#         conn.commit()
-#         conn.close()
-#         return True
-#     return record[1] < MESSAGE_LIMIT_PER_DAY
-
-# def increment_limit(user_id):
-#     today = datetime.utcnow().date()
-#     conn = sqlite3.connect(DB_PATH)
-#     cursor = conn.cursor()
-#     cursor.execute("UPDATE user_messages SET count = count + 1 WHERE user_id = ? AND date = ?", (user_id, str(today)))
-#     conn.commit()
-#     conn.close()
-# --- Конец закомментированной логики SQLite ---
 
 # Клавиатура меню
 MENU_OPTIONS = [
@@ -102,7 +63,6 @@ def gptbots_generate(text, user_id):
         return "Произошла ошибка при обращении к сервису GPTBots."
 
 def send_message(chat_id, text, reply_markup=menu_markup):
-    # Проверка наличия токена Telegram
     if not TELEGRAM_BOT_TOKEN:
         logging.error("TELEGRAM_BOT_TOKEN не установлен.")
         return False
@@ -123,7 +83,6 @@ def send_message(chat_id, text, reply_markup=menu_markup):
         return False
 
 def send_inline(chat_id, text, button_text, button_url):
-    # Проверка наличия токена Telegram
     if not TELEGRAM_BOT_TOKEN:
         logging.error("TELEGRAM_BOT_TOKEN не установлен.")
         return False
@@ -148,55 +107,58 @@ def send_inline(chat_id, text, button_text, button_url):
         logging.error(f"Ошибка отправки inline-сообщения в Telegram: {e}")
         return False
 
-# --- Инициализация базы данных закомментирована ---
-# init_db()
-# --- Конец закомментированной инициализации ---
-
 app = FastAPI()
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    data = await request.json()
-    message = data.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
-    user_id = message.get("from", {}).get("id")
-    text = message.get("text", "")
-
-    if not chat_id or not user_id:
-        logging.warning("Не удалось получить chat_id или user_id")
-        return JSONResponse({"ok": True})
-
-    # --- Логика проверки лимита закомментирована ---
-    # if not check_limit(user_id):
-    #     send_message(chat_id, f"Достигнут лимит ({MESSAGE_LIMIT_PER_DAY}) сообщений на сегодня. Попробуйте завтра!")
-    #     return JSONResponse({"ok": True})
-    # increment_limit(user_id)
-    # --- Конец закомментированной логики лимита ---
-
     try:
+        # Логируем входящий запрос
+        body = await request.body()  # Получаем сырые данные
+        try:
+            data = await request.json()  # Пытаемся декодировать JSON
+            logging.info(f"Received webhook data: {json.dumps(data, indent=2)}")
+        except json.JSONDecodeError:
+            logging.error("Некорректный JSON в запросе")
+            return JSONResponse({"error": "Invalid JSON data"}, status_code=400)
+
+        message = data.get("message", {})
+        chat_id = message.get("chat", {}).get("id")
+        user_id = message.get("from", {}).get("id")
+        text = message.get("text", "")
+
+        if not chat_id or not user_id:
+            logging.warning("Не удалось получить chat_id или user_id")
+            return JSONResponse({"ok": True})
+
+        # Обработка команды /start
         if text == "/start":
-            # Проверяем, установлен ли токен Telegram перед отправкой сообщения
             if TELEGRAM_BOT_TOKEN:
                 send_message(chat_id, "Привет! Я помощник по компьютерной грамотности для новичков. Выберите раздел меню:")
             else:
                 logging.error("TELEGRAM_BOT_TOKEN не установлен. Невозможно отправить приветственное сообщение.")
+                return JSONResponse({"error": "Bot token is missing"}, status_code=500)
+
+        # Обработка пунктов меню
         elif text in MENU_OPTIONS:
             handle_menu_option(chat_id, text)
+
+        # Обработка текстовых запросов через GPTBots
         else:
-            # Проверяем, установлены ли ключи для GPTBots
-            if GPTBOTS_API_KEY and GPTBOTS_AGENT_ID:
-                response = gptbots_generate(text, user_id)
-                send_message(chat_id, response)
-            else:
+            if not GPTBOTS_API_KEY or not GPTBOTS_AGENT_ID:
                 logging.error("GPTBOTS_API_KEY или GPTBOTS_AGENT_ID не установлены.")
                 send_message(chat_id, "К сожалению, я не могу обработать ваш запрос, так как не настроены ключи для сервиса GPT.")
+                return JSONResponse({"error": "GPTBots credentials are missing"}, status_code=500)
+
+            response = gptbots_generate(text, user_id)
+            send_message(chat_id, response)
+
+        return JSONResponse({"ok": True})
+
     except Exception as e:
         logging.error(f"Произошла ошибка: {e}")
-        # Попытка отправить сообщение об ошибке пользователю, если токен Telegram установлен
         if TELEGRAM_BOT_TOKEN:
             send_message(chat_id, "Произошла внутренняя ошибка. Попробуйте позже.")
-
-    return JSONResponse({"ok": True})
+        return JSONResponse({"error": "Internal Server Error"}, status_code=500)
 
 def handle_menu_option(chat_id, option):
     messages = {
@@ -209,9 +171,7 @@ def handle_menu_option(chat_id, option):
                    f"*Основные возможности:*\n- Лимит сообщений: {MESSAGE_LIMIT_PER_DAY} в сутки.\n- Сброс лимита: раз в день.\n- Ведение статистики использования для улучшения сервиса.\n\n"
                    "*Конфиденциальность:*\nВсе ваши данные и сообщения обрабатываются с соблюдением конфиденциальности и не передаются третьим лицам.")
     }
-    # Проверяем, установлен ли токен Telegram перед отправкой сообщения
     if TELEGRAM_BOT_TOKEN:
         send_message(chat_id, messages.get(option, "Выбранный раздел недоступен."))
     else:
         logging.error("TELEGRAM_BOT_TOKEN не установлен. Невозможно отправить сообщение меню.")
-
