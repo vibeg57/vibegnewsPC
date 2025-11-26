@@ -113,8 +113,13 @@ app = FastAPI()
 async def webhook(request: Request):
     try:
         # Логируем входящий запрос
-        data = await request.json()
-        logging.info(f"Received webhook data: {json.dumps(data, indent=2)}")
+        body = await request.body()  # Получаем сырые данные
+        try:
+            data = await request.json()  # Пытаемся декодировать JSON
+            logging.info(f"Received webhook data: {json.dumps(data, indent=2)}")
+        except json.JSONDecodeError:
+            logging.error("Некорректный JSON в запросе")
+            return JSONResponse({"error": "Invalid JSON data"}, status_code=400)
 
         message = data.get("message", {})
         chat_id = message.get("chat", {}).get("id")
