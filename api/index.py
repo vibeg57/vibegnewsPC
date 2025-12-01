@@ -1,13 +1,9 @@
 import os
-import requests
 import json
+import httpx # Используем современную библиотеку вместо requests
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import logging
-import urllib3
-
-# Отключаем предупреждения о небезопасном соединении (так как мы используем verify=False)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Настройка логирования ---
 logging.basicConfig(
@@ -31,17 +27,19 @@ menu_markup = generate_menu_keyboard()
 
 SYSTEM_PROMPT = "Отвечай кратко, понятно и дружелюбно, как эксперт для новичков."
 
-def gptbots_generate(text, user_id):
+# --- АСИНХРОННАЯ функция запроса к GPT ---
+async def gptbots_generate(text, user_id):
     if not GPTBOTS_API_KEY or not GPTBOTS_AGENT_ID:
-        return "Ошибка: Нет ключей доступа."
+        logging.error("Нет ключей GPTBots")
+        return "Ошибка настроек: нет ключей."
 
     endpoint = "https://openapi.gptbots.ai/v1/chat"
     
-    # ИСПРАВЛЕНИЕ: Добавляем User-Agent (маскируемся под браузер) и возвращаем X-API-Key
     headers = {
-        "X-API-Key": GPTBOTS_API_KEY.strip(),
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "Authorization": f"Bearer {GPTBOTS_API_KEY.strip()}", # Пробуем Bearer (стандарт)
+        # Если Bearer не сработает, можно раскомментировать строку ниже:
+        # "X-API-Key": GPTBOTS_API_KEY.strip(), 
+        "Content-Type": "application/json"
     }
     
     data = {
@@ -53,33 +51,40 @@ def gptbots_generate(text, user_id):
     }
     
     try:
-        # ИСПРАВЛЕНИЕ: verify=False отключает строгую проверку SSL (помогает от ConnectionError)
-        response = requests.post(endpoint, headers=headers, json=data, timeout=15, verify=False)
-        
-        if response.status_code == 200:
-            resp_json = response.json()
-            return resp_json.get('data', {}).get('reply') or resp_json.get('message') or "Пустой ответ."
-        elif response.status_code == 401:
-             return "Ошибка ключа (401). Проверьте API Key."
-        elif response.status_code == 404:
-             return "Ошибка агента (404). Проверьте Agent ID."
-        else:
-            logging.error(f"GPTBots Error {response.status_code}: {response.text}")
-            return f"Ошибка сервиса: {response.status_code}"
+        # Используем httpx для асинхронного запроса
+        # timeout=20.0 дает боту больше времени на раздумья
+        async with httpx.AsyncClient(verify=False) as client:
+            response = await client.post(endpoint, headers=headers, json=data, timeout=20.0)
             
+            if response.status_code == 200:
+                resp_json = response.json()
+                return resp_json.get('data', {}).get('reply') or resp_json.get('message') or "Пустой ответ."
+            else:
+                logging.error(f"GPTBots Error {response.status_code}: {response.text}")
+                return f"Ошибка сервиса ({response.status_code})."
+            
+    except httpx.TimeoutException:
+        logging.error("GPTBots timeout")
+        return "Нейросеть долго думает и не успела ответить."
     except Exception as e:
         logging.error(f"Connect Error: {e}")
         return "Не удалось соединиться с сервером GPT."
 
-def send_message(chat_id, text, reply_markup=None):
+# --- Функция отправки в Telegram (тоже переделаем на httpx для надежности) ---
+async def send_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
         "chat_id": chat_id, "text": text, "parse_mode": "Markdown",
         **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {})
     }
-    try: requests.post(url, json=data, timeout=5)
-    except: pass
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(url, json=data, timeout=5.0)
+        return True
+    except Exception as e:
+        logging.error(f"TG Send Error: {e}")
+        return False
 
 app = FastAPI()
 
@@ -95,19 +100,25 @@ async def webhook(request: Request):
         text = message.get("text", "")
 
         if text == "/start":
-            send_message(chat_id, "Привет! Я готов помочь. Задай вопрос:", menu_markup)
+            await send_message(chat_id, "Привет! Я готов помочь. Задай вопрос:", menu_markup)
         elif text in MENU_OPTIONS:
-            answers = {"О боте": "Помощник vibegnews.", "Компьютер": "Советы..."}
-            send_message(chat_id, answers.get(text, "Раздел в разработке."), reply_markup=menu_markup)
+            answers = {"О боте": "Я умный помощник.", "FAQ": "Тут будут ответы."}
+            await send_message(chat_id, answers.get(text, "Раздел в разработке."), reply_markup=menu_markup)
         else:
-            send_message(chat_id, "Запрос отправлен...", reply_markup=menu_markup)
-            reply = gptbots_generate(text, user_id)
-            send_message(chat_id, reply, reply_markup=menu_markup)
+            # Сразу говорим пользователю, что приняли запрос (чтобы он не ждал в тишине)
+            await send_message(chat_id, "⏳ Думаю...", reply_markup=menu_markup)
+            
+            # Делаем запрос к GPT
+            reply = await gptbots_generate(text, user_id)
+            
+            # Отправляем ответ
+            await send_message(chat_id, reply, reply_markup=menu_markup)
 
         return JSONResponse({"ok": True})
-    except:
+    except Exception as e:
+        logging.error(f"Global Error: {e}")
         return JSONResponse({"ok": True})
 
 @app.get("/")
 async def root():
-    return {"status": "Running"}
+    return {"status": "Active with httpx"}
