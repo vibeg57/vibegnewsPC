@@ -1,3 +1,5 @@
-fastapi==0.95.2
-requests==2.31.0
-uvicorn[standard]==0.23.2
+fastapi
+uvicorn
+requests
+urllib3
+certifi

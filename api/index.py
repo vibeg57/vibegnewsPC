@@ -12,13 +12,11 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-# --- Переменные ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
 GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
 MESSAGE_LIMIT_PER_DAY = int(os.getenv("MESSAGE_LIMIT_PER_DAY", 30))
 
-# --- Клавиатура ---
 MENU_OPTIONS = ["Компьютер", "Смартфон", "Интернет", "Программы", "FAQ", "О боте"]
 
 def generate_menu_keyboard():
@@ -27,20 +25,17 @@ def generate_menu_keyboard():
 
 menu_markup = generate_menu_keyboard()
 
-# --- GPTBots Логика ---
 SYSTEM_PROMPT = "Отвечай кратко, понятно и дружелюбно, как эксперт для новичков."
 
 def gptbots_generate(text, user_id):
-    # Проверка ключей
     if not GPTBOTS_API_KEY or not GPTBOTS_AGENT_ID:
-        logging.error("Нет ключей GPTBots!")
-        return "Ошибка настройки бота (нет ключей)."
+        return "Ошибка: Нет ключей доступа."
 
-    # Точная ссылка (проверь, чтобы было /chat в конце)
     endpoint = "https://openapi.gptbots.ai/v1/chat"
     
+    # ИСПРАВЛЕНИЕ: Используем стандартный заголовок Bearer
     headers = {
-        "X-API-Key": GPTBOTS_API_KEY.strip(), # strip() убирает случайные пробелы
+        "Authorization": f"Bearer {GPTBOTS_API_KEY.strip()}",
         "Content-Type": "application/json"
     }
     
@@ -53,40 +48,33 @@ def gptbots_generate(text, user_id):
     }
     
     try:
-        logging.info(f"Отправка запроса в GPTBots: {endpoint}")
-        # Таймаут 9 секунд (важно для Vercel!)
-        response = requests.post(endpoint, headers=headers, json=data, timeout=9)
+        # verify=False — временное решение для Vercel, если он ругается на сертификаты
+        response = requests.post(endpoint, headers=headers, json=data, timeout=10)
         
         if response.status_code == 200:
             resp_json = response.json()
-            # Пытаемся достать ответ из разных возможных полей
-            return resp_json.get('data', {}).get('reply') or resp_json.get('message') or "Пустой ответ от GPT."
+            return resp_json.get('data', {}).get('reply') or resp_json.get('message') or "Пустой ответ."
+        elif response.status_code == 401:
+            logging.error(f"Ошибка 401: Неверный ключ API. Проверьте GPTBOTS_API_KEY")
+            return "Ошибка авторизации (неверный ключ)."
         else:
             logging.error(f"Ошибка GPTBots {response.status_code}: {response.text}")
-            return "Сервис сейчас перегружен, попробуйте через минуту."
+            return "Сервис перегружен, попробуйте позже."
             
     except Exception as e:
-        logging.error(f"Сбой подключения к GPTBots: {e}")
-        return "Сервис временно недоступен (ошибка связи)."
+        logging.error(f"Ошибка соединения: {e}")
+        return "Проблема со связью с нейросетью."
 
-# --- Отправка сообщений ---
 def send_message(chat_id, text, reply_markup=None):
-    if not TELEGRAM_BOT_TOKEN:
-        return False
+    if not TELEGRAM_BOT_TOKEN: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
-        "chat_id": chat_id, 
-        "text": text, 
-        "parse_mode": "Markdown",
+        "chat_id": chat_id, "text": text, "parse_mode": "Markdown",
         **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {})
     }
-    try:
-        requests.post(url, json=data, timeout=5)
-        return True
-    except:
-        return False
+    try: requests.post(url, json=data, timeout=5)
+    except: pass
 
-# --- Сервер ---
 app = FastAPI()
 
 @app.post("/")
@@ -101,19 +89,21 @@ async def webhook(request: Request):
         text = message.get("text", "")
 
         if text == "/start":
-            send_message(chat_id, "Привет! Я готов помочь. Выбери тему:", menu_markup)
+            send_message(chat_id, "Привет! Я готов помочь. Задай вопрос или выбери тему:", menu_markup)
         elif text in MENU_OPTIONS:
-            # Тут простая заглушка для примера
-            answers = {"Компьютер": "Советы по ПК...", "О боте": "Я помощник vibegnews."}
-            send_message(chat_id, answers.get(text, "Раздел в разработке."), reply_markup=menu_markup)
+            answers = {
+                "Компьютер": "Советы по ПК...",
+                "О боте": "Я помощник vibegnews.",
+                "FAQ": "Частые вопросы..."
+            }
+            send_message(chat_id, answers.get(text, "Скоро добавим этот раздел."), reply_markup=menu_markup)
         else:
-            # Запрос к GPT
+            send_message(chat_id, "Думаю над ответом...", reply_markup=menu_markup) # Пишем "Думаю", чтобы юзер знал
             reply = gptbots_generate(text, user_id)
-            send_message(chat_id, reply, menu_markup)
+            send_message(chat_id, reply, reply_markup=menu_markup)
 
         return JSONResponse({"ok": True})
-    except Exception as e:
-        logging.error(f"Critical Error: {e}")
+    except Exception:
         return JSONResponse({"ok": True})
 
 @app.get("/")
