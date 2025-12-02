@@ -1,13 +1,8 @@
 import os
 import json
 import requests
-import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
-# Логирование
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -30,24 +25,37 @@ def send_message(chat_id, text, reply_markup=None):
             **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {})}
     try:
         requests.post(url, json=data, timeout=5)
-    except Exception as e:
-        logger.error(f"TG Error: {e}")
+    except: pass
 
 def gptbots_generate(text, user_id):
-    if not GPTBOTS_API_KEY: return "Нет API ключа"
+    # 1. Проверка наличия ключей
+    if not GPTBOTS_API_KEY: return "❌ Ошибка: В Vercel не добавлен GPTBOTS_API_KEY"
+    if not GPTBOTS_AGENT_ID: return "❌ Ошибка: В Vercel не добавлен GPTBOTS_AGENT_ID"
+    
+    endpoint = "https://openapi.gptbots.ai/v1/chat"
+    headers = {"X-API-Key": GPTBOTS_API_KEY.strip(), "Content-Type": "application/json"}
+    data = {
+        "agent_id": GPTBOTS_AGENT_ID.strip(),
+        "user_id": str(user_id),
+        "query": text,
+        "stream": False
+    }
+    
     try:
-        resp = requests.post(
-            "https://openapi.gptbots.ai/v1/chat",
-            headers={"X-API-Key": GPTBOTS_API_KEY.strip(), "Content-Type": "application/json"},
-            json={"agent_id": GPTBOTS_AGENT_ID.strip(), "user_id": str(user_id), "query": text, "stream": False},
-            timeout=20
-        )
+        # Уменьшил таймаут до 9 секунд, так как Vercel убивает процесс на 10-й секунде
+        resp = requests.post(endpoint, headers=headers, json=data, timeout=9)
+        
         if resp.status_code == 200:
-            return resp.json().get('data', {}).get('reply') or "Пустой ответ"
-        return f"Ошибка GPT: {resp.status_code}"
+            return resp.json().get('data', {}).get('reply') or "GPT прислал пустой ответ"
+        else:
+            # Возвращаем код ошибки и текст от сервера GPT
+            return f"⚠️ Ошибка API {resp.status_code}: {resp.text[:100]}"
+            
+    except requests.exceptions.Timeout:
+        return "⏱ GPT думал дольше 9 секунд (Таймаут Vercel)."
     except Exception as e:
-        logger.error(f"GPT Error: {e}")
-        return "Ошибка соединения с ИИ"
+        # ВОТ ЭТО САМОЕ ВАЖНОЕ: Бот пришлет саму ошибку
+        return f"🔥 CRITICAL ERROR: {str(e)}"
 
 @app.post("/api/webhook")
 async def webhook(request: Request):
@@ -61,13 +69,12 @@ async def webhook(request: Request):
             if not text: return JSONResponse(content={"status": "ignored"})
 
             if text == "/start":
-                send_message(chat_id, "Привет! Я на связи.", menu_markup)
+                send_message(chat_id, "Режим отладки. Напиши любой вопрос.", menu_markup)
             else:
-                send_message(chat_id, "Думаю...") # Простой ответ вместо typing
+                send_message(chat_id, "Думаю...")
                 reply = gptbots_generate(text, msg.get("from", {}).get("id"))
                 send_message(chat_id, reply)
 
         return JSONResponse(content={"status": "ok"})
     except Exception as e:
-        logger.error(f"Error: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
