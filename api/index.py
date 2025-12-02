@@ -28,13 +28,13 @@ def send_message(chat_id, text, reply_markup=None):
     except: pass
 
 def gptbots_generate(text, user_id):
-    if not GPTBOTS_API_KEY: return "❌ Нет ключа API"
+    if not GPTBOTS_API_KEY: return "❌ Ошибка: Нет ключа API"
     
-    # ✅ ИСПРАВЛЕН АДРЕС (было openapi, стало api)
     endpoint = "https://api.gptbots.ai/v1/chat"
     
+    # ✅ ИСПРАВЛЕНИЕ: Используем Authorization: Bearer вместо X-API-Key
     headers = {
-        "X-API-Key": GPTBOTS_API_KEY.strip(),
+        "Authorization": f"Bearer {GPTBOTS_API_KEY.strip()}",
         "Content-Type": "application/json"
     }
     
@@ -46,16 +46,15 @@ def gptbots_generate(text, user_id):
     }
     
     try:
-        # Таймаут 9 сек, чтобы не злить Vercel
         resp = requests.post(endpoint, headers=headers, json=data, timeout=9)
         
         if resp.status_code == 200:
-            return resp.json().get('data', {}).get('reply') or "Пустой ответ"
+            return resp.json().get('data', {}).get('reply') or "Пустой ответ от ИИ"
         else:
             return f"Ошибка GPT {resp.status_code}: {resp.text[:200]}"
             
     except requests.exceptions.Timeout:
-        return "⏱ ИИ думает слишком долго (больше 9 сек)."
+        return "⏱ ИИ думает слишком долго."
     except Exception as e:
         return f"Ошибка соединения: {str(e)}"
 
@@ -71,9 +70,9 @@ async def webhook(request: Request):
             if not text: return JSONResponse(content={"status": "ignored"})
 
             if text == "/start":
-                send_message(chat_id, "Привет! Я готов к работе.", menu_markup)
+                send_message(chat_id, "Привет! Я готов помогать.", menu_markup)
             else:
-                send_message(chat_id, "Генерирую ответ...")
+                send_message(chat_id, "Думаю...")
                 reply = gptbots_generate(text, user_id)
                 send_message(chat_id, reply)
 
