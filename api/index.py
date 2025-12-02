@@ -59,8 +59,8 @@ def gptbots_generate(text, user_id):
 
     for url in endpoints:
         try:
-            # Пробуем подключиться (5 сек на попытку)
-            resp = requests.post(url, headers=headers, json=data, timeout=5)
+            # Пробуем подключиться (10 сек на попытку)
+            resp = requests.post(url, headers=headers, json=data, timeout=10) # Увеличили таймаут до 10 секунд
             
             if resp.status_code == 200:
                 raw = resp.json()
@@ -68,17 +68,19 @@ def gptbots_generate(text, user_id):
                 if reply:
                     return reply
                 else:
-                    return f"✅ Подключился к {url}, но ответ пуст: {json.dumps(raw, ensure_ascii=False)}"
+                    # Если ответ пустой, выводим больше информации
+                    return f"✅ Подключился к {url}, но ответ пуст. Ответ сервера: {json.dumps(raw, ensure_ascii=False)}"
             
-            # Если ошибка 404/500/401 - запоминаем и идем дальше
-            errors.append(f"{url} -> {resp.status_code}")
+            # Если ошибка, запоминаем и идем дальше, показывая больше деталей
+            errors.append(f"{url} -> Статус: {resp.status_code}, Ответ: {resp.text[:100]}...") # Показываем часть ответа сервера
             
         except Exception as e:
             # Если ошибка DNS или таймаут - запоминаем и идем дальше
-            errors.append(f"{url} -> {str(e)[:40]}...")
+            errors.append(f"{url} -> Ошибка: {str(e)[:40]}...")
 
     # Если ни одно зеркало не сработало
     return f"❌ Все зеркала недоступны:\n" + "\n".join(errors)
+
 
 @app.post("/api/webhook")
 async def webhook(request: Request):
