@@ -1,8 +1,13 @@
 import os
 import json
 import requests
+import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+# Включаем логирование на полную
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -21,11 +26,21 @@ menu_markup = generate_menu_keyboard()
 def send_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown", 
-            **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {})}
+    
+    # ⚠️ УБРАЛИ parse_mode="Markdown", чтобы сообщение точно дошло!
+    data = {
+        "chat_id": chat_id, 
+        "text": text, 
+        **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {})
+    }
+    
     try:
-        requests.post(url, json=data, timeout=5)
-    except: pass
+        r = requests.post(url, json=data, timeout=5)
+        # Если ошибка отправки - пишем в лог Vercel
+        if r.status_code != 200:
+            logger.error(f"TG Send Error: {r.text}")
+    except Exception as e:
+        logger.error(f"TG Connection Error: {e}")
 
 def gptbots_generate(text, user_id):
     if not GPTBOTS_API_KEY: return "❌ Ошибка: Нет ключа API"
@@ -45,31 +60,29 @@ def gptbots_generate(text, user_id):
     }
     
     try:
+        logger.info(f"Sending to GPT: {data}") # Пишем в лог, что отправляем
         resp = requests.post(endpoint, headers=headers, json=data, timeout=9)
+        logger.info(f"GPT Response Code: {resp.status_code}") # Пишем код ответа
+        logger.info(f"GPT Body: {resp.text}") # Пишем тело ответа
         
         if resp.status_code == 200:
             raw_json = resp.json()
-            
-            # Попытка 1: Стандартный путь
+            # Пытаемся достать ответ разными способами
             reply = raw_json.get('data', {}).get('reply')
-            
-            # Попытка 2: Если пусто, ищем просто message
             if not reply:
                 reply = raw_json.get('message')
             
             if reply:
                 return reply
             else:
-                # ВАЖНО: Если ответ не найден, присылаем ВЕСЬ JSON в чат для отладки
-                # ensure_ascii=False позволит видеть русский текст, а не коды
-                return f"🔍 ОТЛАДКА (Пришлите это разработчику): {json.dumps(raw_json, ensure_ascii=False)}"
+                # Если ответа нет, возвращаем ВЕСЬ JSON
+                return f"🔍 ОТЛАДКА: {json.dumps(raw_json, ensure_ascii=False)}"
         else:
-            return f"Ошибка GPT {resp.status_code}: {resp.text[:200]}"
+            return f"Ошибка GPT {resp.status_code}: {resp.text}"
             
-    except requests.exceptions.Timeout:
-        return "⏱ ИИ думает слишком долго."
     except Exception as e:
-        return f"Ошибка соединения: {str(e)}"
+        logger.error(f"Global Error: {e}")
+        return f"Критическая ошибка: {str(e)}"
 
 @app.post("/api/webhook")
 async def webhook(request: Request):
@@ -83,12 +96,13 @@ async def webhook(request: Request):
             if not text: return JSONResponse(content={"status": "ignored"})
 
             if text == "/start":
-                send_message(chat_id, "Привет! Я готов помогать.", menu_markup)
+                send_message(chat_id, "Режим полной отладки.", menu_markup)
             else:
                 send_message(chat_id, "Думаю...")
                 reply = gptbots_generate(text, user_id)
-                send_message(chat_id, reply)
+                send_message(chat_id, reply) # Теперь это сообщение точно дойдет
 
         return JSONResponse(content={"status": "ok"})
     except Exception as e:
+        logger.error(f"Webhook Fatal: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
