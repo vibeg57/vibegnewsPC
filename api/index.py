@@ -5,8 +5,8 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-# ВЕРСИЯ КОДА (Измените цифру, если код не обновляется)
-VERSION = "3.0 (Финал)"
+# Версия для проверки обновления
+VERSION = "4.0 (Обход DNS)"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,13 +34,24 @@ def send_message(chat_id, text, reply_markup=None):
     except: pass
 
 def gptbots_generate(text, user_id):
-    if not GPTBOTS_API_KEY: return "❌ Ошибка: Нет ключа API"
+    if not GPTBOTS_API_KEY: return "❌ Нет ключа API"
     
-    # ✅ ЕДИНСТВЕННЫЙ ОФИЦИАЛЬНЫЙ АДРЕС
-    # Если здесь будет ошибка DNS - значит Vercel блокирует этот домен
-    endpoint = "https://openapi.gptbots.ai/v1/chat"
+    # 🛠 СТРАТЕГИЯ ОБХОДА
+    # Мы используем api.gptbots.ai (так как он доступен), но меняем ПУТЬ
     
-    headers = {
+    attempts = [
+        # Попытка 1: Вложенный путь openapi
+        "https://api.gptbots.ai/openapi/v1/chat",
+        
+        # Попытка 2: Альтернативный путь bot
+        "https://api.gptbots.ai/bot/v1/chat",
+        
+        # Попытка 3: "Подмена хоста" (Стучимся в api, но представляемся как openapi)
+        # Это хакерский трюк, который часто срабатывает на Cloudflare
+        {"url": "https://api.gptbots.ai/v1/chat", "host_header": "openapi.gptbots.ai"}
+    ]
+    
+    base_headers = {
         "Authorization": f"Bearer {GPTBOTS_API_KEY.strip()}",
         "Content-Type": "application/json"
     }
@@ -52,24 +63,42 @@ def gptbots_generate(text, user_id):
         "stream": False
     }
     
-    try:
-        # Таймаут 15 сек (пробуем подождать подольше)
-        resp = requests.post(endpoint, headers=headers, json=data, timeout=15)
-        
-        if resp.status_code == 200:
-            raw = resp.json()
-            reply = raw.get('data', {}).get('reply') or raw.get('message')
-            if reply:
-                return reply
+    last_error = ""
+
+    for attempt in attempts:
+        try:
+            # Настройка URL и Заголовков
+            if isinstance(attempt, dict):
+                url = attempt["url"]
+                headers = base_headers.copy()
+                headers["Host"] = attempt["host_header"] # Подменяем заголовок
+                debug_info = f"Подмена Host на {attempt['host_header']}"
             else:
-                return f"Пустой ответ: {json.dumps(raw, ensure_ascii=False)}"
-        else:
-            return f"⚠️ Ошибка от {endpoint}:\nКод: {resp.status_code}\nТекст: {resp.text[:200]}"
+                url = attempt
+                headers = base_headers
+                debug_info = url
+
+            # Запрос
+            resp = requests.post(url, headers=headers, json=data, timeout=5)
             
-    except requests.exceptions.Timeout:
-        return "⏱ ИИ думает слишком долго (Таймаут)."
-    except Exception as e:
-        return f"🔥 Ошибка соединения с {endpoint}:\n{str(e)}"
+            if resp.status_code == 200:
+                raw = resp.json()
+                reply = raw.get('data', {}).get('reply') or raw.get('message')
+                if reply:
+                    return reply
+                else:
+                    return f"Пустой ответ ({debug_info}): {json.dumps(raw, ensure_ascii=False)}"
+            elif resp.status_code == 404:
+                last_error += f"\n❌ {debug_info} -> 404"
+                continue # Ищем дальше
+            else:
+                # Если 401 или 500 - значит мы нашли сервер, но другая ошибка
+                return f"⚠️ Ошибка на {debug_info}: {resp.status_code} {resp.text[:100]}"
+                
+        except Exception as e:
+            last_error += f"\n🔥 {url} -> {str(e)[:50]}"
+
+    return f"Все попытки провалились:{last_error}"
 
 @app.post("/api/webhook")
 async def webhook(request: Request):
@@ -83,10 +112,9 @@ async def webhook(request: Request):
             if not text: return JSONResponse(content={"status": "ignored"})
 
             if text == "/start":
-                # ВАЖНО: Выводим версию кода, чтобы убедиться, что он обновился
-                send_message(chat_id, f"Привет! Версия кода: {VERSION}", menu_markup)
+                send_message(chat_id, f"Версия: {VERSION}. Пробую обход DNS...", menu_markup)
             else:
-                send_message(chat_id, "Думаю...")
+                send_message(chat_id, "Подбираю ключи...")
                 reply = gptbots_generate(text, user_id)
                 send_message(chat_id, reply)
 
