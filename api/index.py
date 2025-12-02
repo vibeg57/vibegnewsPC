@@ -41,10 +41,15 @@ def send_message(chat_id, text, reply_markup=None):
 def gptbots_generate(text, user_id):
     if not GPTBOTS_API_KEY: return "❌ Ошибка: Нет ключа API"
     
-    # ✅ ВОЗВРАЩАЕМ OPENAPI (Так как api.gptbots.ai дал 404)
-    endpoint = "https://openapi.gptbots.ai/v1/chat"
+    # 🔍 СПИСОК АДРЕСОВ ДЛЯ ПРОВЕРКИ
+    # Мы попробуем их по очереди, пока один не сработает
+    possible_endpoints = [
+        "https://api.gptbots.ai/openapi/v1/chat",  # Самый вероятный (путь openapi на домене api)
+        "https://api.gptbots.ai/v1/chat",          # Стандартный
+        "https://www.gptbots.ai/api/v1/chat",      # Альтернативный
+    ]
     
-    # ✅ ХИТРОСТЬ: Отправляем оба варианта ключа, чтобы наверняка
+    # Заголовки (шлем всё сразу, чтобы наверняка)
     headers = {
         "X-API-Key": GPTBOTS_API_KEY.strip(),
         "Authorization": f"Bearer {GPTBOTS_API_KEY.strip()}",
@@ -58,24 +63,38 @@ def gptbots_generate(text, user_id):
         "stream": False
     }
     
-    try:
-        # Таймаут 9 сек
-        resp = requests.post(endpoint, headers=headers, json=data, timeout=9)
-        
-        if resp.status_code == 200:
-            raw = resp.json()
-            reply = raw.get('data', {}).get('reply') or raw.get('message')
-            if reply:
-                return reply
-            else:
-                return f"Пустой ответ: {json.dumps(raw, ensure_ascii=False)}"
-        else:
-            return f"Ошибка GPT {resp.status_code}: {resp.text[:300]}"
+    last_error = ""
+
+    # 🔄 ЦИКЛ ПОДБОРА АДРЕСА
+    for url in possible_endpoints:
+        try:
+            # Короткий таймаут для перебора (4 сек на попытку)
+            resp = requests.post(url, headers=headers, json=data, timeout=4)
             
-    except requests.exceptions.Timeout:
-        return "⏱ ИИ думает слишком долго (больше 9 сек)."
-    except Exception as e:
-        return f"Ошибка соединения: {str(e)}"
+            # Если успех (200) - сразу возвращаем ответ
+            if resp.status_code == 200:
+                raw = resp.json()
+                reply = raw.get('data', {}).get('reply') or raw.get('message')
+                if reply:
+                    return reply  # УРА, НАШЛИ!
+                else:
+                    return f"Ответ пустой (JSON): {json.dumps(raw, ensure_ascii=False)}"
+            
+            # Если 404 - значит адрес не тот, пробуем следующий
+            elif resp.status_code == 404:
+                last_error = f"404 на {url}"
+                continue 
+            
+            # Если другая ошибка (например 401 или 500) - возвращаем её
+            else:
+                return f"Ошибка {resp.status_code} на {url}: {resp.text[:100]}"
+                
+        except Exception as e:
+            last_error = str(e)
+            continue # Пробуем следующий адрес
+
+    # Если ничего не подошло
+    return f"❌ Не удалось подобрать адрес сервера. Последняя ошибка: {last_error}"
 
 @app.post("/api/webhook")
 async def webhook(request: Request):
@@ -89,7 +108,7 @@ async def webhook(request: Request):
             if not text: return JSONResponse(content={"status": "ignored"})
 
             if text == "/start":
-                send_message(chat_id, "Попытка подключения к openapi...", menu_markup)
+                send_message(chat_id, "Ищу рабочий сервер...", menu_markup)
             else:
                 send_message(chat_id, "Думаю...")
                 reply = gptbots_generate(text, user_id)
