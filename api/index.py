@@ -32,7 +32,6 @@ def gptbots_generate(text, user_id):
     
     endpoint = "https://api.gptbots.ai/v1/chat"
     
-    # ✅ ИСПРАВЛЕНИЕ: Используем Authorization: Bearer вместо X-API-Key
     headers = {
         "Authorization": f"Bearer {GPTBOTS_API_KEY.strip()}",
         "Content-Type": "application/json"
@@ -49,7 +48,21 @@ def gptbots_generate(text, user_id):
         resp = requests.post(endpoint, headers=headers, json=data, timeout=9)
         
         if resp.status_code == 200:
-            return resp.json().get('data', {}).get('reply') or "Пустой ответ от ИИ"
+            raw_json = resp.json()
+            
+            # Попытка 1: Стандартный путь
+            reply = raw_json.get('data', {}).get('reply')
+            
+            # Попытка 2: Если пусто, ищем просто message
+            if not reply:
+                reply = raw_json.get('message')
+            
+            if reply:
+                return reply
+            else:
+                # ВАЖНО: Если ответ не найден, присылаем ВЕСЬ JSON в чат для отладки
+                # ensure_ascii=False позволит видеть русский текст, а не коды
+                return f"🔍 ОТЛАДКА (Пришлите это разработчику): {json.dumps(raw_json, ensure_ascii=False)}"
         else:
             return f"Ошибка GPT {resp.status_code}: {resp.text[:200]}"
             
