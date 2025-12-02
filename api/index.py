@@ -5,7 +5,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-# Включаем логирование на полную
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def send_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
-    # ⚠️ УБРАЛИ parse_mode="Markdown", чтобы сообщение точно дошло!
+    # Мы убрали parse_mode, чтобы Markdown не ломал сообщения с спецсимволами
     data = {
         "chat_id": chat_id, 
         "text": text, 
@@ -35,18 +35,17 @@ def send_message(chat_id, text, reply_markup=None):
     }
     
     try:
-        r = requests.post(url, json=data, timeout=5)
-        # Если ошибка отправки - пишем в лог Vercel
-        if r.status_code != 200:
-            logger.error(f"TG Send Error: {r.text}")
+        requests.post(url, json=data, timeout=5)
     except Exception as e:
-        logger.error(f"TG Connection Error: {e}")
+        logger.error(f"TG Error: {e}")
 
 def gptbots_generate(text, user_id):
     if not GPTBOTS_API_KEY: return "❌ Ошибка: Нет ключа API"
     
+    # ✅ Используем api.gptbots.ai (он отвечает 401, значит сервер живой)
     endpoint = "https://api.gptbots.ai/v1/chat"
     
+    # ✅ Используем Bearer токен (исправляет ошибку 401)
     headers = {
         "Authorization": f"Bearer {GPTBOTS_API_KEY.strip()}",
         "Content-Type": "application/json"
@@ -60,29 +59,25 @@ def gptbots_generate(text, user_id):
     }
     
     try:
-        logger.info(f"Sending to GPT: {data}") # Пишем в лог, что отправляем
+        # Таймаут 9 сек (Vercel Free лимит ~10 сек)
         resp = requests.post(endpoint, headers=headers, json=data, timeout=9)
-        logger.info(f"GPT Response Code: {resp.status_code}") # Пишем код ответа
-        logger.info(f"GPT Body: {resp.text}") # Пишем тело ответа
         
         if resp.status_code == 200:
-            raw_json = resp.json()
-            # Пытаемся достать ответ разными способами
-            reply = raw_json.get('data', {}).get('reply')
-            if not reply:
-                reply = raw_json.get('message')
-            
+            raw = resp.json()
+            # Пытаемся найти ответ в разных полях JSON
+            reply = raw.get('data', {}).get('reply') or raw.get('message')
             if reply:
                 return reply
             else:
-                # Если ответа нет, возвращаем ВЕСЬ JSON
-                return f"🔍 ОТЛАДКА: {json.dumps(raw_json, ensure_ascii=False)}"
+                return f"Ответ получен, но пустой: {json.dumps(raw, ensure_ascii=False)}"
         else:
-            return f"Ошибка GPT {resp.status_code}: {resp.text}"
+            # Выводим код ошибки и начало текста ошибки
+            return f"Ошибка GPT {resp.status_code}: {resp.text[:300]}"
             
+    except requests.exceptions.Timeout:
+        return "⏱ ИИ думает слишком долго (больше 9 сек)."
     except Exception as e:
-        logger.error(f"Global Error: {e}")
-        return f"Критическая ошибка: {str(e)}"
+        return f"Ошибка соединения: {str(e)}"
 
 @app.post("/api/webhook")
 async def webhook(request: Request):
@@ -96,13 +91,13 @@ async def webhook(request: Request):
             if not text: return JSONResponse(content={"status": "ignored"})
 
             if text == "/start":
-                send_message(chat_id, "Режим полной отладки.", menu_markup)
+                send_message(chat_id, "Привет! Я готов. Задай вопрос.", menu_markup)
             else:
                 send_message(chat_id, "Думаю...")
                 reply = gptbots_generate(text, user_id)
-                send_message(chat_id, reply) # Теперь это сообщение точно дойдет
+                send_message(chat_id, reply)
 
         return JSONResponse(content={"status": "ok"})
     except Exception as e:
-        logger.error(f"Webhook Fatal: {e}")
+        logger.error(f"Webhook Error: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
