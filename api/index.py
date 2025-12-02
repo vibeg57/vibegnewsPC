@@ -1,6 +1,6 @@
 import os
 import json
-import requests  # Мы используем requests вместо httpx
+import requests
 import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -26,62 +26,48 @@ menu_markup = generate_menu_keyboard()
 def send_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {
-        "chat_id": chat_id, 
-        "text": text, 
-        "parse_mode": "Markdown", 
-        **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {})
-    }
+    data = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown", 
+            **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {})}
     try:
-        # Синхронный запрос
         requests.post(url, json=data, timeout=5)
     except Exception as e:
-        logger.error(f"Telegram Send Error: {e}")
+        logger.error(f"TG Error: {e}")
 
 def gptbots_generate(text, user_id):
-    if not GPTBOTS_API_KEY: return "Нет ключа API"
-    
-    endpoint = "https://openapi.gptbots.ai/v1/chat"
-    headers = {"X-API-Key": GPTBOTS_API_KEY.strip(), "Content-Type": "application/json"}
-    data = {
-        "agent_id": GPTBOTS_AGENT_ID.strip(),
-        "user_id": str(user_id),
-        "query": text,
-        "stream": False
-    }
-    
+    if not GPTBOTS_API_KEY: return "Нет API ключа"
     try:
-        # Синхронный запрос (requests не вызывает Errno 16)
-        response = requests.post(endpoint, headers=headers, json=data, timeout=20)
-        if response.status_code == 200:
-            return response.json().get('data', {}).get('reply') or "Пустой ответ"
-        return f"Ошибка GPT: {response.status_code}"
+        resp = requests.post(
+            "https://openapi.gptbots.ai/v1/chat",
+            headers={"X-API-Key": GPTBOTS_API_KEY.strip(), "Content-Type": "application/json"},
+            json={"agent_id": GPTBOTS_AGENT_ID.strip(), "user_id": str(user_id), "query": text, "stream": False},
+            timeout=20
+        )
+        if resp.status_code == 200:
+            return resp.json().get('data', {}).get('reply') or "Пустой ответ"
+        return f"Ошибка GPT: {resp.status_code}"
     except Exception as e:
         logger.error(f"GPT Error: {e}")
-        return "Бот недоступен (ошибка соединения)"
+        return "Ошибка соединения с ИИ"
 
 @app.post("/api/webhook")
 async def webhook(request: Request):
     try:
         data = await request.json()
-        if "message" in data and "text" in data["message"]:
-            chat_id = data["message"]["chat"]["id"]
-            user_id = data["message"]["from"]["id"]
-            text = data["message"]["text"]
+        if "message" in data:
+            msg = data["message"]
+            chat_id = msg["chat"]["id"]
+            text = msg.get("text", "")
+            
+            if not text: return JSONResponse(content={"status": "ignored"})
 
             if text == "/start":
                 send_message(chat_id, "Привет! Я на связи.", menu_markup)
             else:
-                # Имитация печати
-                try:
-                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendChatAction", 
-                                  json={"chat_id": chat_id, "action": "typing"}, timeout=1)
-                except: pass
-                
-                reply = gptbots_generate(text, user_id)
+                send_message(chat_id, "Думаю...") # Простой ответ вместо typing
+                reply = gptbots_generate(text, msg.get("from", {}).get("id"))
                 send_message(chat_id, reply)
 
         return JSONResponse(content={"status": "ok"})
     except Exception as e:
-        logger.error(f"Webhook Error: {e}")
-        return JSONResponse(content={"status": "error"}, status_code=500)
+        logger.error(f"Error: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
